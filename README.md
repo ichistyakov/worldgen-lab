@@ -16,11 +16,19 @@ Rebuild Go with `-a` after changing Rust; Go's cache does not track the static l
 ## Run
 
 ```sh
-./bin/steel-server -seed 42                 # listens on 127.0.0.1:19132
+./bin/steel-server -seed 42                 # NetherNet: HTTP TCP 127.0.0.1:19160, WebRTC UDP 19161
 ./bin/steel-server -seed 42 -offline        # loopback only, no Xbox sign-in
 ```
 
-Use a new `-dir` when changing the seed or generator revision. `-workers` sets both Dragonfly and native generation threads. `-radius` caps the client view distance (default 12).
+For LAN access, bind the signaling endpoint explicitly and keep the WebRTC UDP port reachable:
+
+```sh
+./bin/steel-server -seed 42 -addr 0.0.0.0:19160 -udp-ports 19161
+```
+
+NetherNet signaling is plaintext HTTP; do not expose it directly to the internet. Keep the generated `keys/server_identity_key.pem` in the server's runtime directory across restarts. The UDP port (or range) is separate from the TCP signaling port. Use `-offline` only for loopback tests.
+
+Use a new `-dir` when changing the seed or generator revision. `-workers` sets both Dragonfly and native generation threads. `-radius` caps the client view distance (default 12). At startup the server searches up to 32 chunk rings from the origin for a dry, level spawn with clearance; if none is found, startup fails rather than placing players in water. Candidate chunks are generated in memory only.
 
 To explore an existing Bedrock save, extract a copy of its world folder and run:
 

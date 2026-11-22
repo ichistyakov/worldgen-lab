@@ -140,6 +140,35 @@ func TestTerrain(t *testing.T) {
 	}
 }
 
+func TestDefaultSpawnIsOnDrySafeGround(t *testing.T) {
+	g := testGenerator(t, 1)
+	spawn, err := g.SafeDefaultSpawn(world.Overworld)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g.DefaultSpawn(world.Overworld); got != spawn {
+		t.Fatalf("Generator.DefaultSpawn() = %v, safe spawn = %v", got, spawn)
+	}
+	t.Logf("seed 1 safe dry spawn: %v", spawn)
+	pos := world.ChunkPos{int32(spawn[0] >> 4), int32(spawn[2] >> 4)}
+	c := testChunk()
+	if err := g.Generate(context.Background(), pos, c); err != nil {
+		t.Fatal(err)
+	}
+	x, z := uint8(spawn[0]&15), uint8(spawn[2]&15)
+	groundY := int16(spawn[1] - 2)
+	name, _, ok := c.BlockRegistry().RuntimeIDToState(c.Block(x, groundY, z, 0))
+	if _, solid := spawnGroundNames[name]; !ok || !solid {
+		t.Fatalf("spawn ground at %v = %q, want an accepted dry surface", spawn, name)
+	}
+	for y := groundY + 1; y <= groundY+2; y++ {
+		name, _, _ := c.BlockRegistry().RuntimeIDToState(c.Block(x, y, z, 0))
+		if name != "minecraft:air" {
+			t.Fatalf("spawn clearance at %v y=%d is %q, want air", spawn, y, name)
+		}
+	}
+}
+
 // TestMappingFallback verifies exact states, waterlogging, per-block defaults and solid/air fallback.
 func TestMappingFallback(t *testing.T) {
 	g := testGenerator(t, 7)

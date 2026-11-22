@@ -29,6 +29,7 @@ type Generator struct {
 	chunks, blocks, fallbackBlocks, unmapped, unmappedBiomes atomic.Uint64
 	spawnOnce                                                sync.Once
 	spawn                                                    cube.Pos
+	spawnErr                                                 error
 }
 
 // Stats reports cumulative generation and fallback counts for this Generator.
@@ -164,19 +165,130 @@ func (g *Generator) translator(registry chunk.BlockRegistry) (*translator, error
 	return t, err
 }
 
-// DefaultSpawn finds the top of the generated origin column, including oceans.
-func (g *Generator) DefaultSpawn(world.Dimension) cube.Pos {
+const maxSpawnSearchChunks = 32
+
+var spawnGroundNames = map[string]struct{}{
+	"minecraft:grass_block": {}, "minecraft:dirt": {}, "minecraft:coarse_dirt": {},
+	"minecraft:podzol": {}, "minecraft:mycelium": {}, "minecraft:rooted_dirt": {},
+	"minecraft:sand": {}, "minecraft:red_sand": {}, "minecraft:gravel": {},
+	"minecraft:stone": {}, "minecraft:deepslate": {}, "minecraft:snow_block": {},
+}
+
+// DefaultSpawn implements world.Generator. It panics rather than silently returning an unsafe spawn.
+func (g *Generator) DefaultSpawn(dim world.Dimension) cube.Pos {
+	spawn, err := g.SafeDefaultSpawn(dim)
+	if err != nil {
+		panic(err)
+	}
+	return spawn
+}
+
+// SafeDefaultSpawn finds the nearest safe dry spawn and returns generation errors to the caller.
+// Candidate chunks are generated in memory only and are not written to the world provider.
+func (g *Generator) SafeDefaultSpawn(dim world.Dimension) (cube.Pos, error) {
+	if dim != world.Overworld {
+		return cube.Pos{}, fmt.Errorf("dry spawn search is only available in the overworld")
+	}
 	g.spawnOnce.Do(func() {
-		world.DefaultBlockRegistry.Finalize()
-		c := chunk.New(world.DefaultBlockRegistry, cube.Range{-64, 319})
-		g.GenerateChunk(world.ChunkPos{}, c)
-		y := int16(317)
-		for y > -64 && c.Block(8, y, 8, 0) == c.BlockRegistry().AirRuntimeID() {
-			y--
-		}
-		g.spawn = cube.Pos{8, int(y) + 2, 8}
+		g.spawn, g.spawnErr = g.findDrySpawn(maxSpawnSearchChunks)
 	})
-	return g.spawn
+	return g.spawn, g.spawnErr
+}
+
+func (g *Generator) findDrySpawn(maxChunks int) (cube.Pos, error) {
+	world.DefaultBlockRegistry.Finalize()
+	var air = world.DefaultBlockRegistry.AirRuntimeID()
+	for radius := 0; radius <= maxChunks; radius++ {
+		var best cube.Pos
+		bestDistance := int64(0)
+		found := false
+		for _, pos := range spawnChunkRing(radius) {
+			c := chunk.New(world.DefaultBlockRegistry, cube.Range{-64, 319})
+			if err := g.Generate(context.Background(), pos, c); err != nil {
+				return cube.Pos{}, fmt.Errorf("generate spawn candidate chunk %v: %w", pos, err)
+			}
+			var surfaceY [16][16]int16
+			var hasSurface [16][16]bool
+			for z := 0; z < 16; z++ {
+				for x := 0; x < 16; x++ {
+					for y := int16(319); y >= -64; y-- {
+						name, _, ok := c.BlockRegistry().RuntimeIDToState(c.Block(uint8(x), y, uint8(z), 0))
+						if ok {
+							if _, ground := spawnGroundNames[name]; ground {
+								surfaceY[x][z], hasSurface[x][z] = y, true
+								break
+							}
+						}
+					}
+				}
+			}
+			for z := 1; z < 15; z++ {
+				for x := 1; x < 15; x++ {
+					if !hasSurface[x][z] {
+						continue
+					}
+					groundY := surfaceY[x][z]
+					if groundY+2 > 319 || !spawnClear(c, air, uint8(x), groundY, uint8(z)) {
+						continue
+					}
+					if !spawnFootprintIsLevel(&surfaceY, &hasSurface, x, z, groundY) {
+						continue
+					}
+					candidate := cube.Pos{int(pos[0])*16 + x, int(groundY) + 2, int(pos[1])*16 + z}
+					distance := int64(candidate[0])*int64(candidate[0]) + int64(candidate[2])*int64(candidate[2])
+					if !found || distance < bestDistance || (distance == bestDistance && (candidate[0] < best[0] || (candidate[0] == best[0] && candidate[2] < best[2]))) {
+						best, bestDistance, found = candidate, distance, true
+					}
+				}
+			}
+		}
+		if found {
+			return best, nil
+		}
+	}
+	return cube.Pos{}, fmt.Errorf("no safe dry spawn found within %d chunks of the origin", maxChunks)
+}
+
+func spawnClear(c *chunk.Chunk, air uint32, x uint8, groundY int16, z uint8) bool {
+	return c.Block(x, groundY+1, z, 0) == air && c.Block(x, groundY+2, z, 0) == air &&
+		c.Block(x, groundY+1, z, 1) == air && c.Block(x, groundY+2, z, 1) == air
+}
+
+func spawnFootprintIsLevel(surfaceY *[16][16]int16, hasSurface *[16][16]bool, x, z int, groundY int16) bool {
+	for dz := -1; dz <= 1; dz++ {
+		for dx := -1; dx <= 1; dx++ {
+			if !hasSurface[x+dx][z+dz] || abs16(surfaceY[x+dx][z+dz]-groundY) > 1 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func spawnChunkRing(radius int) []world.ChunkPos {
+	positions := make([]world.ChunkPos, 0, max(1, radius*8))
+	for x := -radius; x <= radius; x++ {
+		for z := -radius; z <= radius; z++ {
+			if max(absInt(x), absInt(z)) == radius {
+				positions = append(positions, world.ChunkPos{int32(x), int32(z)})
+			}
+		}
+	}
+	return positions
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func abs16(v int16) int16 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // wireReader reads the little-endian versioned native stream with bounds checks.

@@ -29,7 +29,9 @@ func main() {
 
 // run configures persistence, generation, networking and graceful Dragonfly shutdown.
 func run() error {
-	addr := flag.String("addr", "127.0.0.1:19132", "UDP listen address")
+	addr := flag.String("addr", "127.0.0.1:19160", "NetherNet HTTP signaling TCP listen address")
+	udpPorts := flag.String("udp-ports", "19161", "NetherNet/WebRTC UDP port or range")
+	serverName := flag.String("name", "AkelCraft", "server name shown to clients")
 	dir := flag.String("dir", "worlds/steel", "world and player data directory")
 	savedWorld := flag.String("saved-world", "", "existing Bedrock world directory; disables terrain generation")
 	seed := flag.Int64("seed", 1, "signed 64-bit world seed")
@@ -55,9 +57,9 @@ func run() error {
 	}
 	log := slog.Default()
 	config := server.DefaultConfig()
-	config.Network.Address = *addr
+	configureNetherNet(&config, *addr, *udpPorts, filepath.Join(*dir, "keys", "server_identity_key.pem"))
 	config.Server.AuthEnabled = !*offline
-	config.Server.Name = "SteelMC terrain"
+	config.Server.Name = *serverName
 	config.World.Folder = filepath.Join(*dir, "world")
 	if *savedWorld != "" {
 		config.World.Folder = *savedWorld
@@ -89,7 +91,14 @@ func run() error {
 			}
 			return world.NopGenerator{}
 		}
-		settings.Spawn = gen.DefaultSpawn(world.Overworld)
+		spawn, err := gen.SafeDefaultSpawn(world.Overworld)
+		if err != nil {
+			_ = conf.WorldProvider.Close()
+			_ = conf.PlayerProvider.Close()
+			return fmt.Errorf("find safe dry spawn: %w", err)
+		}
+		settings.Spawn = spawn
+		log.Info("selected safe dry world spawn", "position", spawn)
 	}
 	settings.DefaultGameMode = world.GameModeCreative
 	conf.WorldProvider.SaveSettings(settings)
@@ -107,6 +116,15 @@ func run() error {
 		p.Handle(&testflight.Handler{})
 	}
 	return nil
+}
+
+func configureNetherNet(config *server.UserConfig, tcpAddress, udpPorts, keyFile string) {
+	config.Network.Transport = []string{"nethernet"}
+	config.Network.Address = tcpAddress
+	config.Network.NetherNet.Address = tcpAddress
+	config.Network.NetherNet.KeyFile = keyFile
+	config.Network.NetherNet.Domain = "self"
+	config.Network.NetherNet.UDPPorts = udpPorts
 }
 
 // checkSavedWorld rejects missing world files before the provider can create an empty world.

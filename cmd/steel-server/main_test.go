@@ -4,7 +4,30 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/df-mc/dragonfly/server"
 )
+
+func TestNetherNetConfiguration(t *testing.T) {
+	config := server.DefaultConfig()
+	configureNetherNet(&config, "0.0.0.0:19160", "19161", "/runtime/steel/keys/server_identity_key.pem")
+
+	if len(config.Network.Transport) != 1 || config.Network.Transport[0] != "nethernet" {
+		t.Fatalf("transport = %v, want [nethernet]", config.Network.Transport)
+	}
+	if config.Network.Address != "0.0.0.0:19160" || config.Network.NetherNet.Address != "0.0.0.0:19160" {
+		t.Fatalf("signaling address = %q / %q", config.Network.Address, config.Network.NetherNet.Address)
+	}
+	if config.Network.NetherNet.UDPPorts != "19161" {
+		t.Fatalf("UDP ports = %q, want 19161", config.Network.NetherNet.UDPPorts)
+	}
+	if config.Network.NetherNet.KeyFile != "/runtime/steel/keys/server_identity_key.pem" || config.Network.NetherNet.Domain != "self" {
+		t.Fatalf("identity config = key %q, domain %q", config.Network.NetherNet.KeyFile, config.Network.NetherNet.Domain)
+	}
+	if !config.Server.AuthEnabled {
+		t.Fatal("NetherNet configuration disabled Xbox authentication")
+	}
+}
 
 // TestSeedIdentity prevents mixing terrain from different seeds or incomplete metadata.
 func TestSeedIdentity(t *testing.T) {
