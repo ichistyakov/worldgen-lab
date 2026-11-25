@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/cinnabar-mc/worldgen-lab/generator"
+	"github.com/cinnabar-mc/worldgen-lab/internal/aircraft"
 	"github.com/cinnabar-mc/worldgen-lab/internal/testflight"
 	"github.com/df-mc/dragonfly/server"
 	"github.com/df-mc/dragonfly/server/world"
@@ -95,6 +96,7 @@ func run() error {
 	settings.DefaultGameMode = world.GameModeCreative
 	conf.WorldProvider.SaveSettings(settings)
 	testflight.Register()
+	wrap := aircraft.Register(&conf)
 	var srv *server.Server
 	players := func(id uuid.UUID) (*world.EntityHandle, bool) { return srv.Player(id) }
 	for i, listen := range conf.Listeners {
@@ -104,7 +106,7 @@ func run() error {
 	srv.CloseOnProgramEnd()
 	srv.Listen()
 	for p := range srv.Accept() {
-		p.Handle(&testflight.Handler{})
+		p.Handle(wrap(&testflight.Handler{}))
 	}
 	return nil
 }
