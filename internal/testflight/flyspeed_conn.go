@@ -9,6 +9,12 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/protocol/packet"
 )
 
+// flightInputHandler lets the packet wrapper reach flight state through a
+// composite player.Handler.
+type flightInputHandler interface {
+	FlightState() *flySpeedState
+}
+
 // WrapListener adds direct flight controls after Dragonfly processes each input packet.
 func WrapListener(inner func(server.Config) (server.Listener, error), players func(uuid.UUID) (*world.EntityHandle, bool)) func(server.Config) (server.Listener, error) {
 	return func(conf server.Config) (server.Listener, error) {
@@ -78,8 +84,8 @@ func (c *flySpeedConn) ReadPacket() (packet.Packet, error) {
 					}
 					c.handle = handle
 				}
-				if h, ok := p.Handler().(*Handler); ok {
-					h.flight.tick(p, input)
+				if h, ok := p.Handler().(flightInputHandler); ok {
+					h.FlightState().tick(p, input)
 				}
 			})
 			<-task.Done()

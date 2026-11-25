@@ -8,3 +8,8 @@ type Handler struct {
 	player.NopHandler
 	flight flySpeedState
 }
+
+// FlightState exposes flight settings to the input wrapper. Promoting this
+// method through a composite handler keeps flight working when other gameplay
+// handlers are installed on the same player.
+func (h *Handler) FlightState() *flySpeedState { return &h.flight }

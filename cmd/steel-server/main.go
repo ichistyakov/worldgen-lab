@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 
@@ -35,18 +34,11 @@ func run() error {
 	dir := flag.String("dir", "worlds/steel", "world and player data directory")
 	savedWorld := flag.String("saved-world", "", "existing Bedrock world directory; disables terrain generation")
 	seed := flag.Int64("seed", 1, "signed 64-bit world seed")
-	offline := flag.Bool("offline", false, "allow unauthenticated local test clients (loopback only)")
 	workers := flag.Int("workers", generator.DefaultWorkers(), "Dragonfly and native generation workers")
 	radius := flag.Int("radius", 12, "maximum player chunk radius")
 	flag.Parse()
 	if *workers < 1 || *radius < 1 {
 		return errors.New("workers and radius must be positive")
-	}
-	if *offline {
-		host, _, err := net.SplitHostPort(*addr)
-		if err != nil || !net.ParseIP(host).IsLoopback() {
-			return errors.New("-offline requires a loopback IP in -addr")
-		}
 	}
 	if *savedWorld == "" {
 		if err := checkSeed(*dir, *seed); err != nil {
@@ -58,7 +50,7 @@ func run() error {
 	log := slog.Default()
 	config := server.DefaultConfig()
 	configureNetherNet(&config, *addr, *udpPorts, filepath.Join(*dir, "keys", "server_identity_key.pem"))
-	config.Server.AuthEnabled = !*offline
+	config.Server.AuthEnabled = true
 	config.Server.Name = *serverName
 	config.World.Folder = filepath.Join(*dir, "world")
 	if *savedWorld != "" {
@@ -104,10 +96,9 @@ func run() error {
 	conf.WorldProvider.SaveSettings(settings)
 	testflight.Register()
 	var srv *server.Server
+	players := func(id uuid.UUID) (*world.EntityHandle, bool) { return srv.Player(id) }
 	for i, listen := range conf.Listeners {
-		conf.Listeners[i] = testflight.WrapListener(listen, func(id uuid.UUID) (*world.EntityHandle, bool) {
-			return srv.Player(id)
-		})
+		conf.Listeners[i] = testflight.WrapListener(listen, players)
 	}
 	srv = conf.New()
 	srv.CloseOnProgramEnd()
