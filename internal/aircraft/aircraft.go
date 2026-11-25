@@ -38,9 +38,21 @@ func Register(conf *server.Config) func(player.Handler) player.Handler {
 	return wrapHandler
 }
 
-type planeType struct{ world.EntityType }
+// planeType is safe as a zero value: every world.EntityType method is
+// implemented explicitly and delegates to the text entity backing the plane.
+// A nil embedded interface would panic on DecodeNBT while loading saved NBT.
+type planeType struct{}
 
-var planeTypeValue = planeType{entity.TextType}
+func (planeType) Open(tx *world.Tx, handle *world.EntityHandle, data *world.EntityData) world.Entity {
+	return entity.TextType.Open(tx, handle, data)
+}
+func (planeType) BBox(e world.Entity) cube.BBox { return entity.TextType.BBox(e) }
+func (planeType) DecodeNBT(m map[string]any, data *world.EntityData) {
+	entity.TextType.DecodeNBT(m, data)
+}
+func (planeType) EncodeNBT(data *world.EntityData) map[string]any {
+	return entity.TextType.EncodeNBT(data)
+}
 
 func (planeType) EncodeEntity() string        { return planeID }
 func (planeType) NetworkEncodeEntity() string { return "minecraft:minecart" }
@@ -61,7 +73,7 @@ func (planeSpawn) Run(src cmd.Source, o *cmd.Output, tx *world.Tx) {
 		return
 	}
 	pos := p.Position().Add(mgl64.Vec3{2, -1, 0})
-	h := (world.EntitySpawnOpts{Position: pos, NameTag: "AkelCraft Plane"}).New(planeTypeValue, entity.StationaryBehaviourConfig{})
+	h := (world.EntitySpawnOpts{Position: pos, NameTag: "AkelCraft Plane"}).New(planeType{}, entity.StationaryBehaviourConfig{})
 	tx.AddEntity(h)
 	planes[p.UUID()] = h
 	slog.Info("aircraft spawned", "player", p.Name(), "plane_uuid", h.UUID(), "pos", pos)
